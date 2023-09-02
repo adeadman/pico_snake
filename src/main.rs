@@ -17,15 +17,14 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_graphics::{
-    mono_font::{ascii::FONT_10X20, MonoTextStyle},
     pixelcolor::Rgb565,
     prelude::*,
-    text::Text,
+    primitives::{Rectangle, PrimitiveStyle, PrimitiveStyleBuilder},
 };
-use mipidsi::Builder;
-//use embedded_graphics_core::draw_target::DrawTarget;
-//use st7789::{Orientation, ST7789};
+use mipidsi::{Builder, Display};
 use {defmt_rtt as _, panic_probe as _};
+
+use heapless::spsc::Queue;
 
 pub mod display;
 use display::SPIDeviceInterface;
@@ -77,7 +76,6 @@ async fn main(_spawner: Spawner) {
     let di = SPIDeviceInterface::new(display_spi, dcx);
 
     // create display driver
-    //let mut display = ST7789::new(di, Some(rst), Some(bl), H, W);
     let mut display = Builder::st7789(di)
         .with_display_size(H as u16, W as u16)
         .with_framebuffer_size(H as u16, W as u16)
@@ -86,45 +84,111 @@ async fn main(_spawner: Spawner) {
         .init(&mut Delay, Some(rst))
         .unwrap();
 
-    let style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
-    let text = "Hello embedded_graphics \n + embassy + RP2040!";
-    let mut text_x = 10;
-    let mut text_y = 100;
+
+    // Snake styles
+    let snake_style = PrimitiveStyleBuilder::new()
+        .stroke_color(Rgb565::WHITE)
+        .stroke_width(1)
+        .fill_color(Rgb565::WHITE)
+        .build();
+
+    let blank_style = PrimitiveStyleBuilder::new()
+        .stroke_color(Rgb565::BLACK)
+        .stroke_width(1)
+        .fill_color(Rgb565::BLACK)
+        .build();
+
+    // State of snake
+    let mut length = 3;
+    let mut direction = Direction::Right;
+    let mut snake_queue: Queue<SnakeSegment, 512> = Queue::new();
+
+    snake_queue.enqueue(SnakeSegment{x: 10, y: 12}).unwrap();
+    snake_queue.enqueue(SnakeSegment{x: 11, y: 12}).unwrap();
+    snake_queue.enqueue(SnakeSegment{x: 12, y: 12}).unwrap();
+
+    let mut snake_head = SnakeSegment{x: 12, y: 12};
+
+    for segment in snake_queue.iter() {
+        let SnakeSegment{x: seg_x, y: seg_y} = segment.clone();
+        Rectangle::new(Point::new((10 * seg_x).into(), (10 * seg_y).into()), Size::new(10, 10))
+            .into_styled(snake_style)
+            .draw(&mut display)
+            .unwrap();
+    }
+
 
     // Enable LCD backlight
     let mut bl = Output::new(bl, Level::High);
 
+    // clear display
+    display.clear(Rgb565::BLACK).unwrap();
     loop {
         if btn_u.is_low() {
-            text_y -= 5;
+            direction = Direction::Up;
         }
         if btn_d.is_low() {
-            text_y += 5;
+            direction = Direction::Down;
         }
         if btn_l.is_low() {
-            text_x -= 5;
+            direction = Direction::Left;
         }
         if btn_r.is_low() {
-            text_x += 5;
+            direction = Direction::Right;
         }
         if btn_y.is_low() {
             // exit loop
             break;
         }
 
-        // constrain text_x and text_y
-        text_x = if text_x < 0 { 0 } else { text_x };
-        text_x = if text_x > W { W } else { text_x };
-        text_y = if text_y < 0 { 0 } else if text_y > H { H } else { text_y };
-        // clear display
-        display.clear(Rgb565::BLACK).unwrap();
-        Text::new(text, Point::new(text_x, text_y), style)
+        // draw the snake
+        let SnakeSegment {x: head_x, y: head_y} = snake_head.clone();
+
+        // update the snake head
+        let (head_x, head_y) = match direction {
+            Direction::Up => (head_x, head_y - 1),
+            Direction::Down => (head_x, head_y + 1),
+            Direction::Left => (head_x - 1, head_y),
+            Direction::Right => (head_x + 1, head_y),
+        };
+
+        // draw the new head
+        Rectangle::new(Point::new((10 * head_x).into(), (10 * head_y).into()), Size::new(10, 10))
+            .into_styled(snake_style)
             .draw(&mut display)
             .unwrap();
+
+
+        // add the head to the queue
+        snake_head.x = head_x;
+        snake_head.y = head_y;
+        snake_queue.enqueue(snake_head.clone()).unwrap();
+
+        // dequeue the tail and blank
+        let snake_tail = snake_queue.dequeue().unwrap();
+        let SnakeSegment{x: tail_x, y: tail_y} = snake_tail;
+        Rectangle::new(Point::new((10 * tail_x).into(), (10 * tail_y).into()), Size::new(10, 10))
+            .into_styled(blank_style)
+            .draw(&mut display)
+            .unwrap();
+
         // wait 100ms
-        //Timer::after(Duration::from_millis(100)).await;
+        Timer::after(Duration::from_millis(100)).await;
     }
     // blank screen
     display.clear(Rgb565::BLACK).unwrap();
     bl.set_low();
+}
+
+enum Direction {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+#[derive(Clone, Debug)]
+struct SnakeSegment {
+    x: u8,
+    y: u8,
 }
