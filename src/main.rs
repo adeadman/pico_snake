@@ -33,11 +33,10 @@ const H: i32 = 240;
 const W: i32 = 240;
 
 const DISPLAY_FREQ: u32 = 64_000_000;
-const SPI_FREQ: u32 = 200_000;
 
 
 #[embassy_executor::main]
-async fn main(spawner: Spawner) {
+async fn main(_spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     info!("Hello RP2040!");
 
@@ -49,28 +48,24 @@ async fn main(spawner: Spawner) {
     // miso is not needed as there is only a master-to-slave data output for display
     let clk = p.PIN_10;
 
-    let btn_a = Input::new(p.PIN_15, Pull::Up);
-    let btn_b = Input::new(p.PIN_17, Pull::Up);
-    let btn_x = Input::new(p.PIN_19, Pull::Up);
+    let _btn_a = Input::new(p.PIN_15, Pull::Up);
+    let _btn_b = Input::new(p.PIN_17, Pull::Up);
+    let _btn_x = Input::new(p.PIN_19, Pull::Up);
     let btn_y = Input::new(p.PIN_21, Pull::Up);
 
     let btn_u = Input::new(p.PIN_2, Pull::Up);
     let btn_d = Input::new(p.PIN_18, Pull::Up);
     let btn_l = Input::new(p.PIN_16, Pull::Up);
     let btn_r = Input::new(p.PIN_20, Pull::Up);
-    let btn_c = Input::new(p.PIN_3, Pull::Up);
+    let _btn_c = Input::new(p.PIN_3, Pull::Up);
 
     // Set up Serial Peripheral Interface (SPI)
     let mut display_config = spi::Config::default();
     display_config.frequency = DISPLAY_FREQ;
     display_config.phase = spi::Phase::CaptureOnSecondTransition;
     display_config.polarity = spi::Polarity::IdleHigh;
-    let mut spi_config = spi::Config::default();
-    spi_config.frequency = SPI_FREQ;
-    spi_config.phase = spi::Phase::CaptureOnSecondTransition;
-    spi_config.polarity = spi::Polarity::IdleHigh;
 
-    let spi: Spi<'_, _, Blocking> = Spi::new_blocking_txonly(p.SPI1, clk, mosi, spi_config);
+    let spi: Spi<'_, _, Blocking> = Spi::new_blocking_txonly(p.SPI1, clk, mosi, display_config.clone());
     let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(spi));
 
     let display_spi = SpiDeviceWithConfig::new(&spi_bus, Output::new(display_cs, Level::High), display_config);
@@ -84,6 +79,7 @@ async fn main(spawner: Spawner) {
     //let mut display = ST7789::new(di, Some(rst), Some(bl), H, W);
     let mut display = Builder::st7789(di)
         .with_display_size(H as u16, W as u16)
+        .with_framebuffer_size(H as u16, W as u16)
         .with_orientation(mipidsi::Orientation::Landscape(true))
         .with_invert_colors(mipidsi::ColorInversion::Inverted)
         .init(&mut Delay, Some(rst))
@@ -95,7 +91,7 @@ async fn main(spawner: Spawner) {
     let mut text_y = 100;
 
     // Enable LCD backlight
-    let _bl = Output::new(bl, Level::High);
+    let mut bl = Output::new(bl, Level::High);
 
     loop {
         if btn_u.is_low() {
@@ -110,6 +106,10 @@ async fn main(spawner: Spawner) {
         if btn_r.is_low() {
             text_x += 5;
         }
+        if btn_y.is_low() {
+            // exit loop
+            break;
+        }
 
         // constrain text_x and text_y
         text_x = if text_x < 0 { 0 } else { text_x };
@@ -123,6 +123,9 @@ async fn main(spawner: Spawner) {
         // wait 100ms
         //Timer::after(Duration::from_millis(100)).await;
     }
+    // blank screen
+    display.clear(Rgb565::BLACK).unwrap();
+    bl.set_low();
 }
 
 mod waveshare_display_interface {
