@@ -1,0 +1,32 @@
+[package]
+name = "pico_snake"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.3"
+
+defmt = "0.3.5"
+defmt-rtt = "0.4.0"
+panic-probe = { version = "0.3.1", features = ["print-defmt"] }
+
+embassy-embedded-hal = { version = "0.1.0", git="https://github.com/embassy-rs/embassy", features = ["defmt"] }
+embassy-executor = { version = "0.3.0", git="https://github.com/embassy-rs/embassy", features = ["nightly", "arch-cortex-m", "executor-thread", "executor-interrupt", "defmt", "integrated-timers"] }
+embassy-sync = { version = "0.2.0", git="https://github.com/embassy-rs/embassy", features = ["defmt"] }
+embassy-time = { version = "0.1.3", git="https://github.com/embassy-rs/embassy", features = ["nightly", "unstable-traits", "defmt", "defmt-timestamp-uptime"] }
+embassy-rp = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", features = ["defmt", "unstable-traits", "nightly", "unstable-pac", "time-driver"] }
+
+cyw43 = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", features = ["defmt", "firmware-logs"] }
+cyw43-pio = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy", features = ["defmt", "overclock"] }
+static_cell = { version = "1.2.0", features = ["nightly"] }
+embedded-graphics = "0.8.1"
+embedded-graphics-core = { version = "0.4.0", features = ["defmt"] }
+st7789 = "0.7.0"
+byte-slice-cast = { version = "1.2.2", default-features = false }
+
+embedded-hal-1 = { package = "embedded-hal", version = "=1.0.0-rc.1" }
+display-interface = "0.4.1"
+mipidsi = "0.7.1"
