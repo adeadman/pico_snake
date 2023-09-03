@@ -31,3 +31,4 @@ embedded-hal-1 = { package = "embedded-hal", version = "=1.0.0-rc.1" }
 display-interface = "0.4.1"
 mipidsi = "0.7.1"
 heapless = { version = "0.7.16", features = ["defmt"] }
+rand = { version = "0.8.5", default-features = false }

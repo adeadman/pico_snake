@@ -13,6 +13,7 @@ use embassy_executor::Spawner;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::spi;
 use embassy_rp::spi::{Blocking, Spi};
+use embassy_rp::clocks::RoscRng;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Delay, Duration, Timer};
@@ -24,6 +25,7 @@ use embedded_graphics::{
     text::Text,
 };
 use mipidsi::Builder;
+use rand::RngCore;
 use {defmt_rtt as _, panic_probe as _};
 
 use heapless::spsc::Queue;
@@ -41,6 +43,8 @@ const DISPLAY_FREQ: u32 = 64_000_000;
 async fn main(_spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     info!("Hello RP2040!");
+
+    let mut rng = RoscRng;
 
     let bl = p.PIN_13;
     let rst = p.PIN_12;
@@ -100,6 +104,12 @@ async fn main(_spawner: Spawner) {
         .fill_color(Rgb565::BLACK)
         .build();
 
+    let food_style = PrimitiveStyleBuilder::new()
+        .stroke_color(Rgb565::RED)
+        .stroke_width(1)
+        .fill_color(Rgb565::RED)
+        .build();
+
     let white_text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
     let red_text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
 
@@ -107,9 +117,10 @@ async fn main(_spawner: Spawner) {
     let mut gamestate = GameState::Menu;
     let mut length = 3;
     let mut direction = Direction::Right;
-    let mut snake_queue: Queue<SnakeSegment, 512> = Queue::new();
-    let mut snake_head = SnakeSegment{x: 12, y: 12};
-
+    let mut snake_queue: Queue<GameGrid, 512> = Queue::new();
+    // These will get reset at game start
+    let mut snake_head = GameGrid{x: 0, y: 0};
+    let mut food = GameGrid{x: 0, y: 0};
 
     // Enable LCD backlight
     let mut bl = Output::new(bl, Level::High);
@@ -132,20 +143,24 @@ async fn main(_spawner: Spawner) {
                 while !snake_queue.is_empty() {
                     _ = snake_queue.dequeue().unwrap();
                 }
-                snake_queue.enqueue(SnakeSegment{x: 10, y: 12}).unwrap();
-                snake_queue.enqueue(SnakeSegment{x: 11, y: 12}).unwrap();
-                snake_queue.enqueue(SnakeSegment{x: 12, y: 12}).unwrap();
+                snake_queue.enqueue(GameGrid{x: 10, y: 12}).unwrap();
+                snake_queue.enqueue(GameGrid{x: 11, y: 12}).unwrap();
+                snake_queue.enqueue(GameGrid{x: 12, y: 12}).unwrap();
 
                 direction = Direction::Right;
                 length = 3;
-                snake_head = SnakeSegment{x: 12, y: 12};
+                snake_head = GameGrid{x: 12, y: 12};
+                food = GameGrid{
+                    x: (rng.next_u64() % 24) as i16,
+                    y: (rng.next_u64() % 24) as i16,
+                };
                 gamestate = GameState::Starting;
                 continue;
             },
             GameState::Starting => {
                 display.clear(Rgb565::BLACK).unwrap();
                 for segment in snake_queue.iter() {
-                    let SnakeSegment{x: seg_x, y: seg_y} = segment.clone();
+                    let GameGrid{x: seg_x, y: seg_y} = segment.clone();
                     Rectangle::new(Point::new((10 * seg_x).into(), (10 * seg_y).into()), Size::new(10, 10))
                         .into_styled(snake_style)
                         .draw(&mut display)
@@ -180,16 +195,17 @@ async fn main(_spawner: Spawner) {
                 }
             },
             GameState::Playing => {
-                if btn_u.is_low() {
+                // check button presses
+                if btn_u.is_low() && !(direction == Direction::Down){
                     direction = Direction::Up;
                 }
-                if btn_d.is_low() {
+                else if btn_d.is_low() && !(direction == Direction::Up){
                     direction = Direction::Down;
                 }
-                if btn_l.is_low() {
+                else if btn_l.is_low() && !(direction == Direction::Right){
                     direction = Direction::Left;
                 }
-                if btn_r.is_low() {
+                else if btn_r.is_low() && !(direction == Direction::Left){
                     direction = Direction::Right;
                 }
                 if btn_y.is_low() {
@@ -199,7 +215,7 @@ async fn main(_spawner: Spawner) {
                 }
 
                 // draw the snake
-                let SnakeSegment {x: head_x, y: head_y} = snake_head.clone();
+                let GameGrid {x: head_x, y: head_y} = snake_head.clone();
 
                 // update the snake head
                 let (head_x, head_y) = match direction {
@@ -228,11 +244,27 @@ async fn main(_spawner: Spawner) {
                 snake_head.y = head_y;
                 snake_queue.enqueue(snake_head.clone()).unwrap();
 
-                // dequeue the tail and blank
-                let snake_tail = snake_queue.dequeue().unwrap();
-                let SnakeSegment{x: tail_x, y: tail_y} = snake_tail;
-                Rectangle::new(Point::new((10 * tail_x).into(), (10 * tail_y).into()), Size::new(10, 10))
-                    .into_styled(blank_style)
+                // check if we ate food
+                if snake_head == food {
+                    length += 1;
+                    food = GameGrid{
+                        x: (rng.next_u64() % 24) as i16,
+                        y: (rng.next_u64() % 24) as i16,
+                    };
+                } else {
+                    // dequeue the tail and blank
+                    let snake_tail = snake_queue.dequeue().unwrap();
+                    let GameGrid{x: tail_x, y: tail_y} = snake_tail;
+                    Rectangle::new(Point::new((10 * tail_x).into(), (10 * tail_y).into()), Size::new(10, 10))
+                        .into_styled(blank_style)
+                        .draw(&mut display)
+                        .unwrap();
+                }
+
+                // draw food
+                let GameGrid{x: food_x, y: food_y} = food.clone();
+                Rectangle::new(Point::new((10 * food_x).into(), (10 * food_y).into()), Size::new(10, 10))
+                    .into_styled(food_style)
                     .draw(&mut display)
                     .unwrap();
 
@@ -246,6 +278,7 @@ async fn main(_spawner: Spawner) {
     bl.set_low();
 }
 
+#[derive(PartialEq)]
 enum Direction {
     Left,
     Right,
@@ -253,8 +286,8 @@ enum Direction {
     Down,
 }
 
-#[derive(Clone, Debug)]
-struct SnakeSegment {
+#[derive(Clone, Debug, PartialEq)]
+struct GameGrid {
     x: i16,
     y: i16,
 }
