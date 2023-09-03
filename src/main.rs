@@ -17,11 +17,13 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_graphics::{
+    mono_font::{ascii::FONT_10X20, MonoTextStyle},
     pixelcolor::Rgb565,
     prelude::*,
-    primitives::{Rectangle, PrimitiveStyle, PrimitiveStyleBuilder},
+    primitives::{Rectangle, PrimitiveStyleBuilder},
+    text::Text,
 };
-use mipidsi::{Builder, Display};
+use mipidsi::Builder;
 use {defmt_rtt as _, panic_probe as _};
 
 use heapless::spsc::Queue;
@@ -48,7 +50,7 @@ async fn main(_spawner: Spawner) {
     // miso is not needed as there is only a master-to-slave data output for display
     let clk = p.PIN_10;
 
-    let _btn_a = Input::new(p.PIN_15, Pull::Up);
+    let btn_a = Input::new(p.PIN_15, Pull::Up);
     let _btn_b = Input::new(p.PIN_17, Pull::Up);
     let _btn_x = Input::new(p.PIN_19, Pull::Up);
     let btn_y = Input::new(p.PIN_21, Pull::Up);
@@ -98,24 +100,15 @@ async fn main(_spawner: Spawner) {
         .fill_color(Rgb565::BLACK)
         .build();
 
+    let white_text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+    let red_text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
+
     // State of snake
+    let mut gamestate = GameState::Menu;
     let mut length = 3;
     let mut direction = Direction::Right;
     let mut snake_queue: Queue<SnakeSegment, 512> = Queue::new();
-
-    snake_queue.enqueue(SnakeSegment{x: 10, y: 12}).unwrap();
-    snake_queue.enqueue(SnakeSegment{x: 11, y: 12}).unwrap();
-    snake_queue.enqueue(SnakeSegment{x: 12, y: 12}).unwrap();
-
     let mut snake_head = SnakeSegment{x: 12, y: 12};
-
-    for segment in snake_queue.iter() {
-        let SnakeSegment{x: seg_x, y: seg_y} = segment.clone();
-        Rectangle::new(Point::new((10 * seg_x).into(), (10 * seg_y).into()), Size::new(10, 10))
-            .into_styled(snake_style)
-            .draw(&mut display)
-            .unwrap();
-    }
 
 
     // Enable LCD backlight
@@ -124,56 +117,129 @@ async fn main(_spawner: Spawner) {
     // clear display
     display.clear(Rgb565::BLACK).unwrap();
     loop {
-        if btn_u.is_low() {
-            direction = Direction::Up;
+        match gamestate {
+            GameState::Menu => {
+                Text::new("(A) New Game", Point::new(50, 100), white_text_style)
+                    .draw(&mut display)
+                    .unwrap();
+                if btn_a.is_low() {
+                    gamestate = GameState::NewGame;
+                    continue;
+                }
+            },
+            GameState::NewGame => {
+                // ensure snake queue is empty
+                while !snake_queue.is_empty() {
+                    _ = snake_queue.dequeue().unwrap();
+                }
+                snake_queue.enqueue(SnakeSegment{x: 10, y: 12}).unwrap();
+                snake_queue.enqueue(SnakeSegment{x: 11, y: 12}).unwrap();
+                snake_queue.enqueue(SnakeSegment{x: 12, y: 12}).unwrap();
+
+                direction = Direction::Right;
+                length = 3;
+                snake_head = SnakeSegment{x: 12, y: 12};
+                gamestate = GameState::Starting;
+                continue;
+            },
+            GameState::Starting => {
+                display.clear(Rgb565::BLACK).unwrap();
+                for segment in snake_queue.iter() {
+                    let SnakeSegment{x: seg_x, y: seg_y} = segment.clone();
+                    Rectangle::new(Point::new((10 * seg_x).into(), (10 * seg_y).into()), Size::new(10, 10))
+                        .into_styled(snake_style)
+                        .draw(&mut display)
+                        .unwrap();
+                }
+                gamestate = GameState::Playing;
+                continue;
+            },
+            GameState::Paused => {
+                Text::new("(Y) Paused", Point::new(60, 100), white_text_style)
+                    .draw(&mut display)
+                    .unwrap();
+                if btn_y.is_low() {
+                    gamestate = GameState::Starting;
+                    continue;
+                }
+            },
+            GameState::GameOver => {
+                Text::new("Game Over!", Point::new(60, 60), red_text_style)
+                    .draw(&mut display)
+                    .unwrap();
+                Text::new("(A) New Game", Point::new(50, 100), white_text_style)
+                    .draw(&mut display)
+                    .unwrap();
+                if btn_a.is_low() {
+                    gamestate = GameState::NewGame;
+                    continue;
+                }
+                if btn_y.is_low() {
+                    // exit the game completely
+                    break;
+                }
+            },
+            GameState::Playing => {
+                if btn_u.is_low() {
+                    direction = Direction::Up;
+                }
+                if btn_d.is_low() {
+                    direction = Direction::Down;
+                }
+                if btn_l.is_low() {
+                    direction = Direction::Left;
+                }
+                if btn_r.is_low() {
+                    direction = Direction::Right;
+                }
+                if btn_y.is_low() {
+                    // Change to Paused
+                    gamestate = GameState::Paused;
+                    continue;
+                }
+
+                // draw the snake
+                let SnakeSegment {x: head_x, y: head_y} = snake_head.clone();
+
+                // update the snake head
+                let (head_x, head_y) = match direction {
+                    Direction::Up => (head_x, head_y - 1),
+                    Direction::Down => (head_x, head_y + 1),
+                    Direction::Left => (head_x - 1, head_y),
+                    Direction::Right => (head_x + 1, head_y),
+                };
+
+                // Check for crash
+                // TODO do self collision
+                if head_x < 0 || head_x >= 24 || head_y < 0 || head_y >= 24 {
+                    gamestate = GameState::GameOver;
+                    continue;
+                }
+
+                // draw the new head
+                Rectangle::new(Point::new((10 * head_x).into(), (10 * head_y).into()), Size::new(10, 10))
+                    .into_styled(snake_style)
+                    .draw(&mut display)
+                    .unwrap();
+
+
+                // add the head to the queue
+                snake_head.x = head_x;
+                snake_head.y = head_y;
+                snake_queue.enqueue(snake_head.clone()).unwrap();
+
+                // dequeue the tail and blank
+                let snake_tail = snake_queue.dequeue().unwrap();
+                let SnakeSegment{x: tail_x, y: tail_y} = snake_tail;
+                Rectangle::new(Point::new((10 * tail_x).into(), (10 * tail_y).into()), Size::new(10, 10))
+                    .into_styled(blank_style)
+                    .draw(&mut display)
+                    .unwrap();
+
+                // wait 100ms
+                Timer::after(Duration::from_millis(100)).await;
+            },
         }
-        if btn_d.is_low() {
-            direction = Direction::Down;
-        }
-        if btn_l.is_low() {
-            direction = Direction::Left;
-        }
-        if btn_r.is_low() {
-            direction = Direction::Right;
-        }
-        if btn_y.is_low() {
-            // exit loop
-            break;
-        }
-
-        // draw the snake
-        let SnakeSegment {x: head_x, y: head_y} = snake_head.clone();
-
-        // update the snake head
-        let (head_x, head_y) = match direction {
-            Direction::Up => (head_x, head_y - 1),
-            Direction::Down => (head_x, head_y + 1),
-            Direction::Left => (head_x - 1, head_y),
-            Direction::Right => (head_x + 1, head_y),
-        };
-
-        // draw the new head
-        Rectangle::new(Point::new((10 * head_x).into(), (10 * head_y).into()), Size::new(10, 10))
-            .into_styled(snake_style)
-            .draw(&mut display)
-            .unwrap();
-
-
-        // add the head to the queue
-        snake_head.x = head_x;
-        snake_head.y = head_y;
-        snake_queue.enqueue(snake_head.clone()).unwrap();
-
-        // dequeue the tail and blank
-        let snake_tail = snake_queue.dequeue().unwrap();
-        let SnakeSegment{x: tail_x, y: tail_y} = snake_tail;
-        Rectangle::new(Point::new((10 * tail_x).into(), (10 * tail_y).into()), Size::new(10, 10))
-            .into_styled(blank_style)
-            .draw(&mut display)
-            .unwrap();
-
-        // wait 100ms
-        Timer::after(Duration::from_millis(100)).await;
     }
     // blank screen
     display.clear(Rgb565::BLACK).unwrap();
@@ -189,6 +255,15 @@ enum Direction {
 
 #[derive(Clone, Debug)]
 struct SnakeSegment {
-    x: u8,
-    y: u8,
+    x: i16,
+    y: i16,
+}
+
+enum GameState {
+    Menu,
+    NewGame,
+    Starting,
+    Paused,
+    Playing,
+    GameOver,
 }
