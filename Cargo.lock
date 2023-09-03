@@ -1029,6 +1029,7 @@ dependencies = [
 name = "pico_snake"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "byte-slice-cast",
  "cortex-m",
  "cortex-m-rt",

@@ -32,3 +32,4 @@ display-interface = "0.4.1"
 mipidsi = "0.7.1"
 heapless = { version = "0.7.16", features = ["defmt"] }
 rand = { version = "0.8.5", default-features = false }
+arrayvec = { version = "0.7.4", default-features = false }

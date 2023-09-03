@@ -7,7 +7,7 @@
 
 use core::cell::RefCell;
 
-use defmt::*;
+use defmt::info;
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_executor::Spawner;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
@@ -29,6 +29,8 @@ use rand::RngCore;
 use {defmt_rtt as _, panic_probe as _};
 
 use heapless::spsc::Queue;
+use arrayvec::ArrayString;
+use core::fmt::Write;
 
 pub mod display;
 use display::SPIDeviceInterface;
@@ -151,8 +153,8 @@ async fn main(_spawner: Spawner) {
                 length = 3;
                 snake_head = GameGrid{x: 12, y: 12};
                 food = GameGrid{
-                    x: (rng.next_u64() % 24) as i16,
-                    y: (rng.next_u64() % 24) as i16,
+                    x: (rng.next_u32() % 24) as i16,
+                    y: (rng.next_u32() % 24) as i16,
                 };
                 gamestate = GameState::Starting;
                 continue;
@@ -179,10 +181,16 @@ async fn main(_spawner: Spawner) {
                 }
             },
             GameState::GameOver => {
-                Text::new("Game Over!", Point::new(60, 60), red_text_style)
+                Text::new("Game Over!!", Point::new(60, 60), red_text_style)
                     .draw(&mut display)
                     .unwrap();
-                Text::new("(A) New Game", Point::new(50, 100), white_text_style)
+
+                Text::new("Length:", Point::new(70, 100), white_text_style).draw(&mut display).unwrap();
+                let mut score_text = ArrayString::<4>::new();
+                write!(&mut score_text, "{}", length).unwrap();
+                Text::new(&score_text, Point::new(150, 100), red_text_style).draw(&mut display).unwrap();
+
+                Text::new("(A)  New Game", Point::new(50, 140), white_text_style)
                     .draw(&mut display)
                     .unwrap();
                 if btn_a.is_low() {
@@ -248,8 +256,8 @@ async fn main(_spawner: Spawner) {
                 if snake_head == food {
                     length += 1;
                     food = GameGrid{
-                        x: (rng.next_u64() % 24) as i16,
-                        y: (rng.next_u64() % 24) as i16,
+                        x: (rng.next_u32() % 24) as i16,
+                        y: (rng.next_u32() % 24) as i16,
                     };
                 } else {
                     // dequeue the tail and blank
