@@ -129,7 +129,7 @@ async fn main(_spawner: Spawner) {
 
     // clear display
     display.clear(Rgb565::BLACK).unwrap();
-    loop {
+    'gameloop: loop {
         match gamestate {
             GameState::Menu => {
                 Text::new("(A) New Game", Point::new(50, 100), white_text_style)
@@ -233,12 +233,15 @@ async fn main(_spawner: Spawner) {
                     Direction::Right => (head_x + 1, head_y),
                 };
 
-                // Check for crash
-                // TODO do self collision
+                // Check for crash with wall
                 if head_x < 0 || head_x >= 24 || head_y < 0 || head_y >= 24 {
                     gamestate = GameState::GameOver;
                     continue;
                 }
+
+                // update the snake head location
+                snake_head.x = head_x;
+                snake_head.y = head_y;
 
                 // draw the new head
                 Rectangle::new(Point::new((10 * head_x).into(), (10 * head_y).into()), Size::new(10, 10))
@@ -247,18 +250,28 @@ async fn main(_spawner: Spawner) {
                     .unwrap();
 
 
-                // add the head to the queue
-                snake_head.x = head_x;
-                snake_head.y = head_y;
-                snake_queue.enqueue(snake_head.clone()).unwrap();
-
                 // check if we ate food
                 if snake_head == food {
                     length += 1;
-                    food = GameGrid{
-                        x: (rng.next_u32() % 24) as i16,
-                        y: (rng.next_u32() % 24) as i16,
-                    };
+                    let mut food_location_valid = false;
+                    // generate a food location not on the snake
+                    while !food_location_valid {
+                        food = GameGrid{
+                            x: (rng.next_u32() % 24) as i16,
+                            y: (rng.next_u32() % 24) as i16,
+                        };
+                        // presume we are in a valid location
+                        food_location_valid = true;
+                        for segment in snake_queue.iter() {
+                            if food == *segment {
+                                food_location_valid = false;
+                            }
+                        }
+                        if food == snake_head {
+                            // improbably, the food spawned in the same place
+                            food_location_valid = false;
+                        }
+                    }
                 } else {
                     // dequeue the tail and blank
                     let snake_tail = snake_queue.dequeue().unwrap();
@@ -275,6 +288,17 @@ async fn main(_spawner: Spawner) {
                     .into_styled(food_style)
                     .draw(&mut display)
                     .unwrap();
+
+                // check do self collision
+                for segment in snake_queue.iter() {
+                    if snake_head == *segment {
+                        gamestate = GameState::GameOver;
+                        continue 'gameloop;
+                    }
+                }
+
+                // add the head to the queue
+                snake_queue.enqueue(snake_head.clone()).unwrap();
 
                 // wait 100ms
                 Timer::after(Duration::from_millis(100)).await;
