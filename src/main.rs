@@ -121,8 +121,8 @@ async fn main(_spawner: Spawner) {
     let mut direction = Direction::Right;
     let mut snake_queue: Queue<GameGrid, 512> = Queue::new();
     // These will get reset at game start
-    let mut snake_head = GameGrid{x: 0, y: 0};
-    let mut food = GameGrid{x: 0, y: 0};
+    let mut snake_head = GameGrid::default();
+    let mut food = GameGrid::default();
 
     // Enable LCD backlight
     let mut bl = Output::new(bl, Level::High);
@@ -145,17 +145,14 @@ async fn main(_spawner: Spawner) {
                 while !snake_queue.is_empty() {
                     _ = snake_queue.dequeue().unwrap();
                 }
-                snake_queue.enqueue(GameGrid{x: 10, y: 12}).unwrap();
-                snake_queue.enqueue(GameGrid{x: 11, y: 12}).unwrap();
-                snake_queue.enqueue(GameGrid{x: 12, y: 12}).unwrap();
+                snake_queue.enqueue(GameGrid::new(10, 12)).unwrap();
+                snake_queue.enqueue(GameGrid::new(11, 12)).unwrap();
+                snake_queue.enqueue(GameGrid::new(12, 12)).unwrap();
 
                 direction = Direction::Right;
                 length = 3;
-                snake_head = GameGrid{x: 12, y: 12};
-                food = GameGrid{
-                    x: (rng.next_u32() % 24) as i16,
-                    y: (rng.next_u32() % 24) as i16,
-                };
+                snake_head = GameGrid::new(12, 12);
+                food = generate_food_location(&mut rng, &snake_head, &snake_queue);
                 gamestate = GameState::Starting;
                 continue;
             },
@@ -253,25 +250,7 @@ async fn main(_spawner: Spawner) {
                 // check if we ate food
                 if snake_head == food {
                     length += 1;
-                    let mut food_location_valid = false;
-                    // generate a food location not on the snake
-                    while !food_location_valid {
-                        food = GameGrid{
-                            x: (rng.next_u32() % 24) as i16,
-                            y: (rng.next_u32() % 24) as i16,
-                        };
-                        // presume we are in a valid location
-                        food_location_valid = true;
-                        for segment in snake_queue.iter() {
-                            if food == *segment {
-                                food_location_valid = false;
-                            }
-                        }
-                        if food == snake_head {
-                            // improbably, the food spawned in the same place
-                            food_location_valid = false;
-                        }
-                    }
+                    food = generate_food_location(&mut rng, &snake_head, &snake_queue);
                 } else {
                     // dequeue the tail and blank
                     let snake_tail = snake_queue.dequeue().unwrap();
@@ -310,18 +289,36 @@ async fn main(_spawner: Spawner) {
     bl.set_low();
 }
 
+/// Generate a random location on the game grid for food
+///
+/// This ensures the food does not spawn on the snake body with a
+/// dumb brute force.
+fn generate_food_location(rng: &mut RoscRng, snake_head: &GameGrid, snake_body: &Queue<GameGrid, 512>) -> GameGrid {
+    'newfood: loop {
+        let rv = GameGrid::new(
+            (rng.next_u32() % 24) as i16,
+            (rng.next_u32() % 24) as i16,
+        );
+        if rv == *snake_head {
+            // food has spawned on the snake's head
+            continue;
+        }
+        for segment in snake_body.iter() {
+            if rv == *segment {
+                // intersects with snake body, continue outer loop
+                continue 'newfood;
+            }
+        }
+        return rv;
+    }
+}
+
 #[derive(PartialEq)]
 enum Direction {
     Left,
     Right,
     Up,
     Down,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct GameGrid {
-    x: i16,
-    y: i16,
 }
 
 enum GameState {
@@ -331,4 +328,25 @@ enum GameState {
     Paused,
     Playing,
     GameOver,
+}
+
+/// A location on the game grid
+///
+/// # Example
+///
+/// ```
+/// let g = GameGrid::new(1, 2);
+/// assert_eq!(1, g.x);
+/// assert_eq!(2, g.y);
+/// ```
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Default)]
+struct GameGrid {
+    x: i16,
+    y: i16,
+}
+
+impl GameGrid {
+    fn new(x: i16, y: i16) -> Self {
+        Self {x, y}
+    }
 }
